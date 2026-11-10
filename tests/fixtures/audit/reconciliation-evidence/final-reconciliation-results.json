@@ -1,0 +1,215 @@
+{
+  "timestamp": "2026-10-30T10:37:28.939Z",
+  "routeReconciliation": {
+    "/formats/gif": {
+      "path": "/formats/gif",
+      "desc": "Original 53rd route (triggers 404 handler in app/formats/[slug]/page.tsx)",
+      "viewports": {
+        "small-mobile": {
+          "width": 320,
+          "scrollWidth": 320,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-gif_small-mobile.png"
+        },
+        "standard-mobile": {
+          "width": 375,
+          "scrollWidth": 375,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-gif_standard-mobile.png"
+        },
+        "large-mobile": {
+          "width": 430,
+          "scrollWidth": 430,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-gif_large-mobile.png"
+        },
+        "intermediate-phablet": {
+          "width": 640,
+          "scrollWidth": 640,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-gif_intermediate-phablet.png"
+        },
+        "pre-tablet": {
+          "width": 767,
+          "scrollWidth": 767,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-gif_pre-tablet.png"
+        },
+        "tablet-portrait": {
+          "width": 768,
+          "scrollWidth": 768,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-gif_tablet-portrait.png"
+        },
+        "pre-desktop": {
+          "width": 1023,
+          "scrollWidth": 1023,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-gif_pre-desktop.png"
+        },
+        "tablet-landscape": {
+          "width": 1024,
+          "scrollWidth": 1024,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-gif_tablet-landscape.png"
+        },
+        "desktop": {
+          "width": 1366,
+          "scrollWidth": 1366,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-gif_desktop.png"
+        },
+        "large-desktop": {
+          "width": 1920,
+          "scrollWidth": 1920,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-gif_large-desktop.png"
+        }
+      }
+    },
+    "/formats/heic": {
+      "path": "/formats/heic",
+      "desc": "Canonical 5th format guide route from lib/formats.ts",
+      "viewports": {
+        "small-mobile": {
+          "width": 320,
+          "scrollWidth": 320,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-heic_small-mobile.png"
+        },
+        "standard-mobile": {
+          "width": 375,
+          "scrollWidth": 375,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-heic_standard-mobile.png"
+        },
+        "large-mobile": {
+          "width": 430,
+          "scrollWidth": 430,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-heic_large-mobile.png"
+        },
+        "intermediate-phablet": {
+          "width": 640,
+          "scrollWidth": 640,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-heic_intermediate-phablet.png"
+        },
+        "pre-tablet": {
+          "width": 767,
+          "scrollWidth": 767,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-heic_pre-tablet.png"
+        },
+        "tablet-portrait": {
+          "width": 768,
+          "scrollWidth": 768,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-heic_tablet-portrait.png"
+        },
+        "pre-desktop": {
+          "width": 1023,
+          "scrollWidth": 1023,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-heic_pre-desktop.png"
+        },
+        "tablet-landscape": {
+          "width": 1024,
+          "scrollWidth": 1024,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-heic_tablet-landscape.png"
+        },
+        "desktop": {
+          "width": 1366,
+          "scrollWidth": 1366,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-heic_desktop.png"
+        },
+        "large-desktop": {
+          "width": 1920,
+          "scrollWidth": 1920,
+          "overflow": 0,
+          "passed": true,
+          "screenshot": "tests/fixtures/audit/reconciliation-evidence/reconcile_format-heic_large-desktop.png"
+        }
+      }
+    }
+  },
+  "transitionTests": [
+    {
+      "test": "direct_public_load",
+      "passed": false,
+      "pubHeader": true,
+      "pubFooter": true,
+      "adminAside": true
+    },
+    {
+      "test": "direct_admin_load",
+      "passed": true,
+      "pubHeader": false,
+      "pubFooter": false,
+      "adminHeader": true,
+      "adminAside": true
+    },
+    {
+      "test": "public_to_admin_navigation",
+      "passed": true,
+      "pubHeader": false,
+      "pubFooter": false,
+      "adminHeader": true,
+      "adminAside": true
+    },
+    {
+      "test": "admin_to_public_navigation",
+      "passed": false,
+      "pubHeader": true,
+      "pubFooter": true,
+      "adminAside": true
+    },
+    {
+      "test": "browser_back_forward",
+      "passed": true,
+      "backCheck": {
+        "pathname": "/admin/dashboard",
+        "pubHeader": false,
+        "pubFooter": false,
+        "adminHeader": true,
+        "adminAside": true
+      },
+      "forwardCheck": {
+        "pathname": "/",
+        "pubHeader": true,
+        "pubFooter": true
+      }
+    },
+    {
+      "test": "admin_route_refresh",
+      "passed": true,
+      "pubHeader": false,
+      "pubFooter": false,
+      "adminHeader": true,
+      "adminAside": true
+    }
+  ],
+  "consoleMessages": [],
+  "hydrationErrors": []
+}

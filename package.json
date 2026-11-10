@@ -1,0 +1,54 @@
+{
+  "name": "react-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "node scripts/copy-pdf-worker.cjs && next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:e2e": "./node_modules/.bin/playwright test",
+    "db:bootstrap-homepage": "npx tsx scripts/bootstrap-homepage.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.4.1",
+    "@tailwindcss/postcss": "^4.3.3",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.2.3",
+    "heic-to": "^1.5.2",
+    "jose": "^6.2.12",
+    "jpeg-js": "^0.4.4",
+    "jszip": "^3.10.2",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "next": "^16.4.2",
+    "pako": "^3.0.2",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.3.289",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@next/eslint-plugin-next": "^16.4.2",
+    "@playwright/test": "^1.63.0",
+    "@types/bcryptjs": "^3.0.0",
+    "@types/jszip": "^3.4.1",
+    "@types/node": "^22.14.0",
+    "@types/pako": "^3.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^10.11.0",
+    "prisma": "^6.4.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^5.0.1"
+  },
+  "optionalDependencies": {
+    "lightningcss": "^1.33.0"
+  }
+}

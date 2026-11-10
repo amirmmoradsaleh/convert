@@ -1,0 +1,37 @@
+services:
+  # Production runtime service for Convert24
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    image: convert24:production
+    container_name: convert24-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - USE_MEMORY_DB=${USE_MEMORY_DB:-false}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@localhost:5432/filetools_db?schema=public}
+      - ADMIN_JWT_SECRET=${ADMIN_JWT_SECRET:-super-secret-admin-jwt-token-change-in-production-min-32-chars}
+      - COOKIE_SECURE=${COOKIE_SECURE:-true}
+      - TRUST_PROXY=${TRUST_PROXY:-false}
+
+  # Isolated Linux container for running validation suite (Vitest, lint, tsc, E2E)
+  validator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: validator
+    image: convert24:validator
+    container_name: convert24-validator
+    profiles:
+      - test
+    environment:
+      - USE_MEMORY_DB=true
+      - DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/filetools_db?schema=public
+      - ADMIN_JWT_SECRET=super-secret-admin-jwt-token-change-in-production-min-32-chars
+    command: npm test
