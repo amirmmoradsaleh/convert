@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAdminAuth } from '@/lib/admin/guard';
 import { publishPost } from '@/lib/admin/services/blog.service';
+import { handleAdminApiError } from '@/lib/admin/api-error';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -15,7 +16,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const post = await publishPost(id, auth.user);
     return NextResponse.json({ post, success: true, message: `Blog post '${post.title}' published successfully.` });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Failed to publish blog post.';
-    return NextResponse.json({ error: msg }, { status: 400 });
+    return handleAdminApiError(err);
   }
 }

@@ -3,6 +3,7 @@ import {
   sanitizeCustomHtml,
   sanitizeRichTextHtml,
   isSafeUrl,
+  isValidRasterDataUrl,
 } from '../../lib/admin/validation';
 import { hasPermission } from '../../lib/admin/permissions';
 import { AdminUserSession } from '../../lib/admin/types';
@@ -12,14 +13,28 @@ import {
   restorePageRevision,
   createDraftPage,
   updateDraftPage,
+  publishPage,
+  unpublishPage,
 } from '../../lib/admin/services/page.service';
 import {
   deletePost,
   restoreRevision,
   createDraft,
   updateDraft,
+  publishPost,
+  unpublishPost,
+  schedulePost,
 } from '../../lib/admin/services/blog.service';
+import { POST as publishBlogRoute } from '../../app/api/admin/blog/[id]/publish/route';
+import { POST as unpublishBlogRoute } from '../../app/api/admin/blog/[id]/unpublish/route';
+import { POST as scheduleBlogRoute } from '../../app/api/admin/blog/[id]/schedule/route';
+import { NextRequest } from 'next/server';
 import { getDb } from '@/lib/db';
+
+const mockRequireAdminAuth = vi.fn();
+vi.mock('@/lib/admin/guard', () => ({
+  requireAdminAuth: (...args: any[]) => mockRequireAdminAuth(...args),
+}));
 
 // Mock database and cache dependencies for service unit tests
 vi.mock('@/lib/db', () => {
@@ -222,6 +237,41 @@ describe('Convert24 Security Remediation — SEC-02 Regression Protection', () =
         expect(sanitized).toContain('href="https://convert24.net/tools"');
         expect(sanitized).toContain('rel="noopener noreferrer"');
       });
+
+      it('strips solidus-delimited payloads with mixed quotes and attributes', () => {
+        const input1 = '<a/href="javascript:alert(1)"/target="_blank">Click</a>';
+        const input2 = '<a/href=javascript:alert(1)/id="nav-link">Click</a>';
+        const input3 = '<img/src="/valid.png"/onerror="alert(1)">';
+        const input4 = '<img/src=/valid.png/onerror=alert(1)>';
+        expect(sanitizeCustomHtml(input1)).toContain('href="#"');
+        expect(sanitizeCustomHtml(input1)).not.toContain('javascript:');
+        expect(sanitizeCustomHtml(input2)).toContain('href="#"');
+        expect(sanitizeCustomHtml(input2)).not.toContain('javascript:');
+        expect(sanitizeCustomHtml(input3)).not.toContain('onerror');
+        expect(sanitizeCustomHtml(input3)).toContain('src="/valid.png"');
+        expect(sanitizeCustomHtml(input4)).not.toContain('onerror');
+        expect(sanitizeCustomHtml(input4)).toContain('src="/valid.png"');
+      });
+
+      it('strips dangerous SVG and MathML tags with event handlers completely', () => {
+        const input1 = '<svg/onload=alert(1)>';
+        const input2 = '<svg onload=alert(1)><g>content</g></svg>';
+        const input3 = '<math/onload=alert(1)>';
+        expect(sanitizeCustomHtml(input1)).toBe('');
+        expect(sanitizeCustomHtml(input2)).toBe('');
+        expect(sanitizeCustomHtml(input3)).toBe('');
+      });
+
+      it('sanitizes backslash-based and encoded backslash URL bypasses', () => {
+        const input1 = '<a href="/\\evil.com">Bypass 1</a>';
+        const input2 = '<a href="/%5cevil.com">Bypass 2</a>';
+        const input3 = '<a href="/%5Cevil.com">Bypass 3</a>';
+        const input4 = '<a href="//evil.com">Bypass 4</a>';
+        expect(sanitizeCustomHtml(input1)).toContain('href="#"');
+        expect(sanitizeCustomHtml(input2)).toContain('href="#"');
+        expect(sanitizeCustomHtml(input3)).toContain('href="#"');
+        expect(sanitizeCustomHtml(input4)).toContain('href="#"');
+      });
     });
 
     describe('sanitizeRichTextHtml', () => {
@@ -255,10 +305,30 @@ describe('Convert24 Security Remediation — SEC-02 Regression Protection', () =
       });
 
       it('strips solidus-delimited event handlers in rich text (<img/onerror=...>)', () => {
-        const input = '<img/onerror=alert(1) src="image.jpg">';
+        const input = '<img/onerror=alert(1) src="/image.jpg">';
         const sanitized = sanitizeRichTextHtml(input);
         expect(sanitized).not.toContain('onerror');
         expect(sanitized).not.toContain('alert(1)');
+      });
+
+      it('strips svg and math elements with event handlers in rich text', () => {
+        const input1 = '<svg/onload=alert(1)>';
+        const input2 = '<svg onload=alert(1)><circle r="5"/></svg>';
+        const input3 = '<math/onload=alert(1)>';
+        expect(sanitizeRichTextHtml(input1)).toBe('');
+        expect(sanitizeRichTextHtml(input2)).toBe('');
+        expect(sanitizeRichTextHtml(input3)).toBe('');
+      });
+
+      it('sanitizes backslash-based authority bypasses in rich text links', () => {
+        const input1 = '<a href="/\\evil.com">Evil</a>';
+        const input2 = '<a href="/%5cevil.com">Evil Encoded</a>';
+        const input3 = '[Markdown Link](//evil.com)';
+        const input4 = '[Markdown Link](/%5cevil.com)';
+        expect(sanitizeRichTextHtml(input1)).toContain('href="#"');
+        expect(sanitizeRichTextHtml(input2)).toContain('href="#"');
+        expect(sanitizeRichTextHtml(input3)).toContain('[Markdown Link](#)');
+        expect(sanitizeRichTextHtml(input4)).toContain('[Markdown Link](#)');
       });
     });
 
@@ -282,6 +352,23 @@ describe('Convert24 Security Remediation — SEC-02 Regression Protection', () =
         expect(isSafeUrl('/\\evil.com/path')).toBe(false);
         expect(isSafeUrl('\\\\evil.com')).toBe(false);
         expect(isSafeUrl('\\evil.com')).toBe(false);
+      });
+
+      it('rejects encoded backslashes and multi-encoded bypasses', () => {
+        expect(isSafeUrl('/%5cevil.com')).toBe(false);
+        expect(isSafeUrl('/%5Cevil.com')).toBe(false);
+        expect(isSafeUrl('/%255cevil.com')).toBe(false);
+        expect(isSafeUrl('/%255Cevil.com')).toBe(false);
+        expect(isSafeUrl('/%252f%252fevil.com')).toBe(false);
+        expect(isSafeUrl('/path%5cevil')).toBe(false);
+        expect(isSafeUrl('/path/with\\backslash')).toBe(false);
+      });
+
+      it('rejects leading control characters and null byte obfuscation', () => {
+        expect(isSafeUrl('\0/path')).toBe(false);
+        expect(isSafeUrl('\x00javascript:alert(1)')).toBe(false);
+        expect(isSafeUrl('\x1f/path')).toBe(false);
+        expect(isSafeUrl('/path\0evil')).toBe(false);
       });
 
       it('rejects obfuscated javascript and data schemes', () => {
@@ -308,6 +395,25 @@ describe('Convert24 Security Remediation — SEC-02 Regression Protection', () =
       it('allows safe raster image data URLs', () => {
         expect(isSafeUrl('data:image/png;base64,iVBORw0KGgo')).toBe(true);
         expect(isSafeUrl('data:image/jpeg;base64,/9j/4AAQSkZJRg')).toBe(true);
+      });
+
+      it('validates raster Data URLs and rejects malformed base64', () => {
+        expect(isValidRasterDataUrl('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA')).toBe(true);
+        expect(isValidRasterDataUrl('data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD')).toBe(true);
+        expect(isValidRasterDataUrl('data:image/webp;base64,UklGRkAAAABXRUJQVlA4')).toBe(true);
+        expect(isValidRasterDataUrl('data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')).toBe(true);
+        expect(isValidRasterDataUrl('data:image/png;base64,iVBORw0KGgo')).toBe(true);
+        expect(isValidRasterDataUrl('data:image/jpeg;base64,/9j/4AAQSkZJRg')).toBe(true);
+
+        // Malformed base64
+        expect(isSafeUrl('data:image/png;base64,invalid==')).toBe(false);
+        expect(isSafeUrl('data:image/png;base64,abcd==')).toBe(false);
+        expect(isSafeUrl('data:image/png;base64,a===')).toBe(false);
+        expect(isSafeUrl('data:image/png;base64,abcde')).toBe(false);
+        expect(isSafeUrl('data:image/png;base64,===')).toBe(false);
+        expect(isSafeUrl('data:image/png;base64,')).toBe(false);
+        expect(isSafeUrl('data:image/svg+xml;base64,PHN2Zz4=')).toBe(false);
+        expect(isSafeUrl('data:text/html;base64,PHNjcmlwdD4=')).toBe(false);
       });
     });
   });
@@ -991,6 +1097,281 @@ describe('Convert24 Security Remediation — SEC-02 Regression Protection', () =
 
         expect(updated.title).toBe('Updated Live Post');
         expect(mockDb.blogPost.update).toHaveBeenCalled();
+      });
+    });
+
+    describe('publishPage & unpublishPage Authorization Enforcement', () => {
+      it('prohibits EDITOR from publishing a page via publishPage', async () => {
+        mockDb.page.findUnique.mockResolvedValue({
+          id: 'page-draft-publish',
+          slug: 'draft-page-publish',
+          status: 'DRAFT',
+          content: { blocks: [] },
+          seo: null,
+        });
+
+        await expect(publishPage('page-draft-publish', editorUser)).rejects.toThrow(
+          /lacks 'PUBLISH_CONTENT' permission/
+        );
+
+        expect(mockDb.page.update).not.toHaveBeenCalled();
+      });
+
+      it('allows CONTENT_MANAGER and ADMIN to publish a page via publishPage', async () => {
+        mockDb.page.findUnique.mockResolvedValue({
+          id: 'page-draft-publish-2',
+          slug: 'draft-page-publish-2',
+          status: 'DRAFT',
+          content: { blocks: [] },
+          seo: null,
+        });
+        mockDb.page.update.mockResolvedValue({
+          id: 'page-draft-publish-2',
+          slug: 'draft-page-publish-2',
+          status: 'PUBLISHED',
+          content: { blocks: [] },
+          seo: null,
+        });
+
+        const res = await publishPage('page-draft-publish-2', contentManagerUser);
+        expect(res.status).toBe('PUBLISHED');
+        expect(mockDb.page.update).toHaveBeenCalled();
+      });
+
+      it('prohibits EDITOR from unpublishing a page via unpublishPage', async () => {
+        mockDb.page.findUnique.mockResolvedValue({
+          id: 'page-pub-unpublish',
+          slug: 'pub-page-unpublish',
+          status: 'PUBLISHED',
+        });
+
+        await expect(unpublishPage('page-pub-unpublish', editorUser)).rejects.toThrow(
+          /lacks 'PUBLISH_CONTENT' permission/
+        );
+
+        expect(mockDb.page.update).not.toHaveBeenCalled();
+      });
+
+      it('allows CONTENT_MANAGER and ADMIN to unpublish a page via unpublishPage', async () => {
+        mockDb.page.findUnique.mockResolvedValue({
+          id: 'page-pub-unpublish-2',
+          slug: 'pub-page-unpublish-2',
+          status: 'PUBLISHED',
+        });
+        mockDb.page.update.mockResolvedValue({
+          id: 'page-pub-unpublish-2',
+          slug: 'pub-page-unpublish-2',
+          status: 'DRAFT',
+          content: null,
+          seo: null,
+        });
+
+        const res = await unpublishPage('page-pub-unpublish-2', adminUser);
+        expect(res.status).toBe('DRAFT');
+        expect(mockDb.page.update).toHaveBeenCalled();
+      });
+    });
+
+    describe('publishPost, unpublishPost & schedulePost Authorization Enforcement', () => {
+      it('prohibits EDITOR from publishing a blog post via publishPost', async () => {
+        mockDb.blogPost.findUnique.mockResolvedValue({
+          id: 'post-draft-pub',
+          slug: 'draft-post-pub',
+          status: 'DRAFT',
+        });
+
+        await expect(publishPost('post-draft-pub', editorUser)).rejects.toThrow(
+          /lacks 'PUBLISH_CONTENT' permission/
+        );
+
+        expect(mockDb.blogPost.update).not.toHaveBeenCalled();
+      });
+
+      it('allows CONTENT_MANAGER and ADMIN to publish a blog post via publishPost', async () => {
+        mockDb.blogPost.findUnique.mockResolvedValue({
+          id: 'post-draft-pub-2',
+          slug: 'draft-post-pub-2',
+          title: 'Post Title',
+          status: 'DRAFT',
+        });
+        mockDb.blogPost.update.mockResolvedValue({
+          id: 'post-draft-pub-2',
+          slug: 'draft-post-pub-2',
+          title: 'Post Title',
+          excerpt: '',
+          content: '<p>Content</p>',
+          featuredImage: null,
+          featuredImageAlt: null,
+          readingTime: '1 min read',
+          status: 'PUBLISHED',
+          publishedAt: new Date(),
+          scheduledFor: null,
+          authorId: contentManagerUser.id,
+          categoryId: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          author: { id: contentManagerUser.id, name: contentManagerUser.name, email: contentManagerUser.email, role: contentManagerUser.role },
+          category: null,
+          tags: [],
+          seo: null,
+        });
+
+        const res = await publishPost('post-draft-pub-2', contentManagerUser);
+        expect(res.status).toBe('PUBLISHED');
+        expect(mockDb.blogPost.update).toHaveBeenCalled();
+      });
+
+      it('prohibits EDITOR from unpublishing a blog post via unpublishPost', async () => {
+        mockDb.blogPost.findUnique.mockResolvedValue({
+          id: 'post-pub-unpub',
+          slug: 'pub-post-unpub',
+          status: 'PUBLISHED',
+        });
+
+        await expect(unpublishPost('post-pub-unpub', editorUser)).rejects.toThrow(
+          /lacks 'PUBLISH_CONTENT' permission/
+        );
+
+        expect(mockDb.blogPost.update).not.toHaveBeenCalled();
+      });
+
+      it('allows CONTENT_MANAGER and ADMIN to unpublish a blog post via unpublishPost', async () => {
+        mockDb.blogPost.findUnique.mockResolvedValue({
+          id: 'post-pub-unpub-2',
+          slug: 'pub-post-unpub-2',
+          title: 'Post Title',
+          status: 'PUBLISHED',
+        });
+        mockDb.blogPost.update.mockResolvedValue({
+          id: 'post-pub-unpub-2',
+          slug: 'pub-post-unpub-2',
+          title: 'Post Title',
+          excerpt: '',
+          content: '<p>Content</p>',
+          featuredImage: null,
+          featuredImageAlt: null,
+          readingTime: '1 min read',
+          status: 'DRAFT',
+          publishedAt: null,
+          scheduledFor: null,
+          authorId: adminUser.id,
+          categoryId: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          author: { id: adminUser.id, name: adminUser.name, email: adminUser.email, role: adminUser.role },
+          category: null,
+          tags: [],
+          seo: null,
+        });
+
+        const res = await unpublishPost('post-pub-unpub-2', adminUser);
+        expect(res.status).toBe('DRAFT');
+        expect(mockDb.blogPost.update).toHaveBeenCalled();
+      });
+
+      it('prohibits EDITOR from scheduling a blog post via schedulePost', async () => {
+        mockDb.blogPost.findUnique.mockResolvedValue({
+          id: 'post-draft-sched',
+          slug: 'draft-post-sched',
+          status: 'DRAFT',
+        });
+
+        await expect(
+          schedulePost('post-draft-sched', new Date(Date.now() + 86400000), editorUser)
+        ).rejects.toThrow(/lacks 'PUBLISH_CONTENT' permission/);
+
+        expect(mockDb.blogPost.update).not.toHaveBeenCalled();
+      });
+
+      it('allows CONTENT_MANAGER and ADMIN to schedule a blog post via schedulePost', async () => {
+        const futureDate = new Date(Date.now() + 86400000);
+        mockDb.blogPost.findUnique.mockResolvedValue({
+          id: 'post-draft-sched-2',
+          slug: 'draft-post-sched-2',
+          title: 'Sched Title',
+          status: 'DRAFT',
+        });
+        mockDb.blogPost.update.mockResolvedValue({
+          id: 'post-draft-sched-2',
+          slug: 'draft-post-sched-2',
+          title: 'Sched Title',
+          excerpt: '',
+          content: '<p>Content</p>',
+          featuredImage: null,
+          featuredImageAlt: null,
+          readingTime: '1 min read',
+          status: 'SCHEDULED',
+          publishedAt: futureDate,
+          scheduledFor: futureDate,
+          authorId: contentManagerUser.id,
+          categoryId: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          author: { id: contentManagerUser.id, name: contentManagerUser.name, email: contentManagerUser.email, role: contentManagerUser.role },
+          category: null,
+          tags: [],
+          seo: null,
+        });
+
+        const res = await schedulePost('post-draft-sched-2', futureDate, contentManagerUser);
+        expect(res.status).toBe('SCHEDULED');
+        expect(mockDb.blogPost.update).toHaveBeenCalled();
+      });
+    });
+
+    describe('Blog API Route Authorization (HTTP Integration)', () => {
+      it('POST /api/admin/blog/[id]/publish returns HTTP 403 when user lacks PUBLISH_CONTENT', async () => {
+        mockRequireAdminAuth.mockResolvedValueOnce({
+          errorResponse: new Response(
+            JSON.stringify({ error: "Forbidden: Role 'EDITOR' lacks 'PUBLISH_CONTENT' permission." }),
+            { status: 403, headers: { 'content-type': 'application/json' } }
+          ),
+        });
+
+        const req = new NextRequest('http://localhost:3000/api/admin/blog/post-1/publish', { method: 'POST' });
+        const res = await publishBlogRoute(req, { params: Promise.resolve({ id: 'post-1' }) });
+        expect(res.status).toBe(403);
+        const data = await res.json();
+        expect(data.error).toContain("Forbidden: Role 'EDITOR' lacks 'PUBLISH_CONTENT' permission");
+      });
+
+      it('POST /api/admin/blog/[id]/publish returns HTTP 403 via handleAdminApiError if service throws forbidden', async () => {
+        mockRequireAdminAuth.mockResolvedValueOnce({ user: editorUser });
+        const req = new NextRequest('http://localhost:3000/api/admin/blog/post-1/publish', { method: 'POST' });
+        const res = await publishBlogRoute(req, { params: Promise.resolve({ id: 'post-1' }) });
+        expect(res.status).toBe(403);
+        const data = await res.json();
+        expect(data.error).toContain("Forbidden: Role 'EDITOR' lacks 'PUBLISH_CONTENT' permission");
+        expect(data.failureType).toBe('forbidden');
+      });
+
+      it('POST /api/admin/blog/[id]/unpublish returns HTTP 403 when user lacks PUBLISH_CONTENT', async () => {
+        mockRequireAdminAuth.mockResolvedValueOnce({
+          errorResponse: new Response(
+            JSON.stringify({ error: "Forbidden: Role 'EDITOR' lacks 'PUBLISH_CONTENT' permission." }),
+            { status: 403, headers: { 'content-type': 'application/json' } }
+          ),
+        });
+
+        const req = new NextRequest('http://localhost:3000/api/admin/blog/post-1/unpublish', { method: 'POST' });
+        const res = await unpublishBlogRoute(req, { params: Promise.resolve({ id: 'post-1' }) });
+        expect(res.status).toBe(403);
+      });
+
+      it('POST /api/admin/blog/[id]/schedule returns HTTP 403 when user lacks PUBLISH_CONTENT', async () => {
+        mockRequireAdminAuth.mockResolvedValueOnce({
+          errorResponse: new Response(
+            JSON.stringify({ error: "Forbidden: Role 'EDITOR' lacks 'PUBLISH_CONTENT' permission." }),
+            { status: 403, headers: { 'content-type': 'application/json' } }
+          ),
+        });
+
+        const req = new NextRequest('http://localhost:3000/api/admin/blog/post-1/schedule', {
+          method: 'POST',
+          body: JSON.stringify({ scheduledFor: new Date().toISOString() }),
+        });
+        const res = await scheduleBlogRoute(req, { params: Promise.resolve({ id: 'post-1' }) });
+        expect(res.status).toBe(403);
       });
     });
   });

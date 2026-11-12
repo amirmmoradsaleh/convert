@@ -186,6 +186,10 @@ export async function getPageBySlug(slug: string, publishedOnly = false) {
 }
 
 export async function createDraftPage(input: CreatePageInput, author: AdminUserSession) {
+  if (input.status === 'PUBLISHED' && !hasPermission(author.role, 'PUBLISH_CONTENT')) {
+    throw new Error(`Forbidden: Role '${author.role}' lacks 'PUBLISH_CONTENT' permission to create published pages.`);
+  }
+
   const db = getDb();
   const validation = validatePagePayload(input);
   if (!validation.isValid) {
@@ -203,10 +207,6 @@ export async function createDraftPage(input: CreatePageInput, author: AdminUserS
   }
 
   const sanitizedBlocks = validation.sanitizedBlocks.length > 0 ? validation.sanitizedBlocks : input.blocks || [];
-
-  if (input.status === 'PUBLISHED' && !hasPermission(author.role, 'PUBLISH_CONTENT')) {
-    throw new Error(`Forbidden: Role '${author.role}' lacks 'PUBLISH_CONTENT' permission to create published pages.`);
-  }
 
   const page = await db.page.create({
     data: {
@@ -429,6 +429,10 @@ export async function updateDraftPage(
 }
 
 export async function publishPage(id: string, author: AdminUserSession) {
+  if (!hasPermission(author.role, 'PUBLISH_CONTENT')) {
+    throw new Error(`Forbidden: Role '${author.role}' lacks 'PUBLISH_CONTENT' permission to publish pages.`);
+  }
+
   const db = getDb();
   let page = await db.page.findUnique({
     where: { id },
@@ -495,6 +499,10 @@ export async function publishPage(id: string, author: AdminUserSession) {
 }
 
 export async function unpublishPage(id: string, author: AdminUserSession) {
+  if (!hasPermission(author.role, 'PUBLISH_CONTENT')) {
+    throw new Error(`Forbidden: Role '${author.role}' lacks 'PUBLISH_CONTENT' permission to unpublish pages.`);
+  }
+
   const db = getDb();
   let page = await db.page.findUnique({ where: { id } });
   if (!page) {

@@ -40,18 +40,82 @@ export const RASTER_DATA_URL_REGEX =
   /^data:image\/(png|jpeg|jpg|webp|gif)(?:;charset=[a-zA-Z0-9-]+)?;base64,[a-zA-Z0-9+/=]+$/i;
 
 /**
+ * Validates raster image data URLs with strict Base64 structure and MIME checking.
+ * Permits valid padded Base64 (length multiple of 4, ending with up to 2 '=')
+ * or valid unpadded Base64 (length % 4 !== 1, strictly [A-Za-z0-9+/]).
+ * Rejects SVG, HTML, scripts, invalid padding, and non-base64 characters.
+ */
+export function isValidRasterDataUrl(url?: string | null): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+
+  const prefixMatch = trimmed.match(/^data:image\/(png|jpeg|jpg|webp|gif)(?:;charset=[a-zA-Z0-9-]+)?;base64,/i);
+  if (!prefixMatch) return false;
+
+  const payload = trimmed.slice(prefixMatch[0].length);
+  if (!payload) return false;
+
+  // Reject payloads with spaces, newlines, or control chars
+  // eslint-disable-next-line no-control-regex
+  if (/[\s\u0000-\u001F\u007F-\u009F]/.test(payload)) return false;
+
+  // Case A: Padded Base64 (length multiple of 4, ending with up to 2 '=')
+  if (payload.includes('=')) {
+    if (payload.length % 4 !== 0) return false;
+    return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)$/.test(payload);
+  }
+
+  // Case B: Unpadded Base64 (no '=', length % 4 cannot be 1)
+  if (payload.length % 4 === 1) return false;
+  return /^[A-Za-z0-9+/]+$/.test(payload);
+}
+
+/**
  * Validates URLs to prevent script injection (XSS) via javascript:, vbscript:, or data: URLs.
  * Strictly permits safe relative URLs, anchor fragments, http/https, mailto, tel, and validated raster data URLs.
- * Rejects SVG data URLs, HTML data URLs, protocol-relative //, backslash authority bypasses (/\\, /\), and dangerous schemes.
+ * Rejects SVG data URLs, HTML data URLs, protocol-relative //, backslash authority bypasses (/\\, /\, /%5c), and dangerous schemes.
  */
 export function isSafeUrl(url?: string | null): boolean {
   if (!url || typeof url !== 'string') return true;
   const trimmed = url.trim();
   if (trimmed === '') return true;
 
-  // Immediately reject backslash authority bypasses (/\\evil.com, /\evil.com, /path\evil)
+  // Immediately reject control characters or null bytes
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F-\u009F]/.test(trimmed)) {
+    return false;
+  }
+
+  // Immediately reject raw backslashes anywhere
   if (trimmed.includes('\\')) {
     return false;
+  }
+
+  // Reject URL-encoded backslashes (%5c, %5C) anywhere in the input
+  if (/%5c/i.test(trimmed)) {
+    return false;
+  }
+
+  // Iteratively decode to intercept single-, double-, and multi-encoded bypasses
+  let checkStr = trimmed;
+  for (let pass = 0; pass < 5; pass++) {
+    try {
+      const next = decodeURIComponent(checkStr);
+      if (next.includes('\\') || /%5c/i.test(next)) {
+        return false;
+      }
+      // eslint-disable-next-line no-control-regex
+      if (/[\u0000-\u001F\u007F-\u009F]/.test(next)) {
+        return false;
+      }
+      if (next.startsWith('//') || /^\/(?:\/|\\)/.test(next)) {
+        return false;
+      }
+      if (next === checkStr) break;
+      checkStr = next;
+    } catch {
+      return false;
+    }
   }
 
   const lower = trimmed.toLowerCase();
@@ -69,26 +133,65 @@ export function isSafeUrl(url?: string | null): boolean {
   // Block dangerous schemes
   if (
     decoded.startsWith('javascript:') ||
-    decoded.startsWith('vbscript:')
+    decoded.startsWith('vbscript:') ||
+    decoded.startsWith('data:')
   ) {
+    if (decoded.startsWith('data:')) {
+      return isValidRasterDataUrl(trimmed);
+    }
     return false;
   }
 
-  // Explicitly validate supported raster image data URLs with strict structure
-  if (decoded.startsWith('data:')) {
-    return RASTER_DATA_URL_REGEX.test(trimmed);
+  if (decoded.startsWith('file:') || decoded.startsWith('blob:')) {
+    return false;
   }
 
-  // Allow safe relative URLs (excluding protocol-relative //), #, http, https, mailto, tel
-  if (
-    (lower.startsWith('/') && !lower.startsWith('//')) ||
-    lower.startsWith('#') ||
-    lower.startsWith('http://') ||
-    lower.startsWith('https://') ||
-    lower.startsWith('mailto:') ||
-    lower.startsWith('tel:')
-  ) {
+  // Reject protocol-relative or backslash-starting paths
+  if (lower.startsWith('//') || /^\/(?:\/|\\)/.test(lower)) {
+    return false;
+  }
+
+  // Safe anchor fragment
+  if (lower.startsWith('#')) {
     return true;
+  }
+
+  // Safe mailto: or tel:
+  if (lower.startsWith('mailto:') || lower.startsWith('tel:')) {
+    return true;
+  }
+
+  // Safe relative URL (starts with /)
+  if (lower.startsWith('/')) {
+    try {
+      const parsed = new URL(trimmed, 'https://guard.convert24.internal');
+      if (parsed.origin !== 'https://guard.convert24.internal') {
+        return false;
+      }
+      const parsedDecoded = new URL(checkStr, 'https://guard.convert24.internal');
+      if (parsedDecoded.origin !== 'https://guard.convert24.internal') {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Safe external HTTP / HTTPS
+  if (lower.startsWith('http://') || lower.startsWith('https://')) {
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return false;
+      }
+      if (!parsed.hostname) {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   // Reject malformed or unrecognized protocol strings
@@ -196,7 +299,15 @@ export function validateNavigationDestination(destination?: string | null): {
 
   // Allowed internal relative path (starts with / and followed by valid path/query/fragment)
   if (trimmed.startsWith('/')) {
-    return { isValid: true, normalized: trimmed };
+    try {
+      const parsed = new URL(trimmed, 'https://guard.convert24.internal');
+      if (parsed.origin !== 'https://guard.convert24.internal') {
+        return { isValid: false, error: 'Navigation link destination is unsafe: invalid path or origin breakout.' };
+      }
+      return { isValid: true, normalized: trimmed };
+    } catch {
+      return { isValid: false, error: `Navigation link '${trimmed}' is invalid or malformed.` };
+    }
   }
 
   // Allowed anchor / fragment link on current page (starts with #)
@@ -301,6 +412,159 @@ export function validateNavigationItem(input: any): NavigationItemValidationResu
   return { isValid: true, errors: [], sanitized };
 }
 
+interface ParsedAttribute {
+  name: string;
+  value: string;
+  hasValue: boolean;
+}
+
+/**
+ * Specification-aligned HTML attribute tokenizer.
+ * Correctly parses attributes separated by ASCII whitespace or solidus ('/'),
+ * handling unquoted, single-quoted, and double-quoted attribute values.
+ * Prevents attribute parsing bypasses such as <a/href=javascript:...> and <img/onerror=...>.
+ */
+export function parseAttributes(attrString: string): ParsedAttribute[] {
+  const attrs: ParsedAttribute[] = [];
+  let i = 0;
+  const n = attrString.length;
+
+  while (i < n) {
+    while (i < n && (/\s/.test(attrString[i]) || attrString[i] === '/')) {
+      i++;
+    }
+    if (i >= n) break;
+
+    const nameStart = i;
+    while (i < n && !/[\s/=>]/.test(attrString[i])) {
+      i++;
+    }
+    const name = attrString.slice(nameStart, i);
+    if (!name) {
+      i++;
+      continue;
+    }
+
+    while (i < n && /\s/.test(attrString[i])) {
+      i++;
+    }
+
+    let value = '';
+    let hasValue = false;
+    if (i < n && attrString[i] === '=') {
+      hasValue = true;
+      i++;
+      while (i < n && /\s/.test(attrString[i])) {
+        i++;
+      }
+      if (i < n) {
+        const quote = attrString[i];
+        if (quote === '"' || quote === "'") {
+          i++;
+          const valStart = i;
+          while (i < n && attrString[i] !== quote) {
+            i++;
+          }
+          value = attrString.slice(valStart, i);
+          if (i < n && attrString[i] === quote) {
+            i++;
+          }
+        } else {
+          const valStart = i;
+          while (i < n && !/[\s>]/.test(attrString[i])) {
+            if (attrString[i] === '/') {
+              const rest = attrString.slice(i + 1);
+              if (/^[a-zA-Z_:][a-zA-Z0-9_.:-]*\s*=/.test(rest)) {
+                break;
+              }
+            }
+            i++;
+          }
+          value = attrString.slice(valStart, i);
+        }
+      }
+    }
+
+    attrs.push({ name, value, hasValue });
+  }
+
+  return attrs;
+}
+
+/**
+ * Sanitizes tag attributes using the deterministic attribute tokenizer.
+ * Drops all event handlers (on*), validates URL attributes against isSafeUrl,
+ * sanitizes CSS styles, and enforces rel="noopener noreferrer" on target="_blank".
+ */
+export function sanitizeTagAttributes(tagName: string, attrString: string, isSelfClosing: boolean): string {
+  const parsed = parseAttributes(attrString);
+  const cleanAttrs: string[] = [];
+  let hasTargetBlank = false;
+  let hasRel = false;
+
+  for (const { name, value, hasValue } of parsed) {
+    const lowerName = name.toLowerCase();
+
+    // 1. Strip all inline event handlers (on*)
+    if (lowerName.startsWith('on')) {
+      continue;
+    }
+
+    // 2. Strip dangerous form/namespace attributes
+    if (lowerName === 'formaction' || lowerName === 'action' || lowerName === 'xmlns') {
+      continue;
+    }
+
+    // 3. Validate and sanitize URL attributes
+    if (['href', 'src', 'cite', 'poster', 'background'].includes(lowerName)) {
+      if (!isSafeUrl(value)) {
+        cleanAttrs.push(`${lowerName}="#"`);
+      } else {
+        const safeVal = value.replace(/"/g, '&quot;');
+        cleanAttrs.push(`${lowerName}="${safeVal}"`);
+      }
+      continue;
+    }
+
+    // 4. Sanitize style attributes
+    if (lowerName === 'style') {
+      const cleanStyle = value
+        .replace(/expression\s*\([^)]*\)/gi, '')
+        .replace(/url\s*\(\s*["']?\s*javascript:[^)]*\)/gi, '')
+        .replace(/url\s*\([^)]*\)/gi, 'none')
+        .replace(/@import\s+[^;]+;/gi, '')
+        .replace(/-moz-binding\s*:[^;]+;/gi, '')
+        .replace(/behavior\s*:[^;]+;/gi, '')
+        .replace(/"/g, '&quot;');
+      cleanAttrs.push(`style="${cleanStyle}"`);
+      continue;
+    }
+
+    if (tagName.toLowerCase() === 'a') {
+      if (lowerName === 'target' && value === '_blank') {
+        hasTargetBlank = true;
+      }
+      if (lowerName === 'rel') {
+        hasRel = true;
+      }
+    }
+
+    if (!hasValue) {
+      cleanAttrs.push(lowerName);
+    } else {
+      const safeVal = value.replace(/"/g, '&quot;');
+      cleanAttrs.push(`${lowerName}="${safeVal}"`);
+    }
+  }
+
+  if (tagName.toLowerCase() === 'a' && hasTargetBlank && !hasRel) {
+    cleanAttrs.push('rel="noopener noreferrer"');
+  }
+
+  const attrStr = cleanAttrs.length > 0 ? ' ' + cleanAttrs.join(' ') : '';
+  return `<${tagName}${attrStr}${isSelfClosing ? ' />' : '>'}`;
+}
+
 /**
  * Sanitizes rich text HTML by removing malicious tags, attributes, event handlers, and javascript URLs.
  */
@@ -310,40 +574,28 @@ export function sanitizeRichTextHtml(rawHtml?: string | null): string {
   let sanitized = rawHtml;
 
   // 1. Recursively remove paired dangerous tags and their content until fixed point
+  // Note: includes svg and math to prevent <svg/onload=alert(1)> and nested namespace bypasses
   let prev: string;
   do {
     prev = sanitized;
-    sanitized = sanitized.replace(/<\s*(script|iframe|object|embed|applet|style|form|input|button)[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
+    sanitized = sanitized.replace(/<\s*(script|iframe|object|embed|applet|style|form|input|button|svg|math)[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
   } while (sanitized !== prev);
 
   // 1b. Remove any remaining unclosed or orphaned dangerous tags
   do {
     prev = sanitized;
-    sanitized = sanitized.replace(/<\s*(script|iframe|object|embed|applet|style|form|input|button)\b[^>]*\/?>/gi, '');
-    sanitized = sanitized.replace(/<\s*\/\s*(script|iframe|object|embed|applet|style|form|input|button)\s*>/gi, '');
+    sanitized = sanitized.replace(/<\s*(script|iframe|object|embed|applet|style|form|input|button|svg|math)\b[^>]*\/?>/gi, '');
+    sanitized = sanitized.replace(/<\s*\/\s*(script|iframe|object|embed|applet|style|form|input|button|svg|math)\s*>/gi, '');
   } while (sanitized !== prev);
 
-  // 2. Remove inline event handlers (onload, onerror, onclick, onmouseover, etc.)
-  // Handles whitespace and solidus (/) attribute delimiters, e.g. <img/onerror=alert(1)>
-  do {
-    prev = sanitized;
-    sanitized = sanitized.replace(/(?:[\s/]+)on[a-zA-Z0-9_-]+\s*=\s*(?:["'][^"']*["']|[^\s>]+)/gi, ' ');
-    sanitized = sanitized.replace(/(?:[\s/]+)on[a-zA-Z0-9_-]+\s*(?=[>/\s])/gi, ' ');
-  } while (sanitized !== prev);
+  // 2. Tokenize and sanitize all remaining HTML tags and their attributes
+  sanitized = sanitized.replace(/<([a-zA-Z][a-zA-Z0-9:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g, (_, tagName, rawAttrs) => {
+    const isSelfClosing = rawAttrs.trim().endsWith('/');
+    const cleanAttrs = rawAttrs.replace(/\/+\s*$/, '');
+    return sanitizeTagAttributes(tagName, cleanAttrs, isSelfClosing);
+  });
 
-  // 3. Remove dangerous URL schemes in attributes (quoted, unquoted, entity-encoded, solidus-separated)
-  sanitized = sanitized.replace(
-    /(?:[\s/]+)(href|src|cite|poster|background|action|formaction)\s*=\s*(?:(["'])([\s\S]*?)\2|([^\s>]+))/gi,
-    (match, attr, _quote, quotedVal, unquotedVal) => {
-      const urlValue = (quotedVal !== undefined ? quotedVal : (unquotedVal || '')).trim();
-      if (!isSafeUrl(urlValue)) {
-        return ` ${attr}="#"`;
-      }
-      return match;
-    }
-  );
-
-  // 4. Remove dangerous URL schemes in markdown links and images: [label](url) and ![alt](url)
+  // 3. Remove dangerous URL schemes in markdown links and images: [label](url) and ![alt](url)
   sanitized = sanitized.replace(
     /(!?\[[^\]\r\n]*\])\(((?:[^()\r\n]|\((?:[^()\r\n]|\([^()\r\n]*\))*\))*)\)/g,
     (match, label, rawUrl) => {
@@ -433,72 +685,12 @@ export function sanitizeCustomHtml(rawHtml?: string | null): string {
     sanitized = sanitized.replace(/<!\[CDATA\[[\s\S]*?\]\]>/gi, '');
   } while (sanitized !== prev);
 
-  // 4. Recursive removal of inline event handlers (on* attributes like onerror, onload, onclick, ontoggle)
-  // Handles quoted, unquoted, whitespace-separated, solidus-separated (/), and newline variations
-  do {
-    prev = sanitized;
-    sanitized = sanitized.replace(/(?:[\s/]+)on[a-zA-Z0-9_-]+\s*=\s*(?:["'][^"']*["']|[^\s>]+)/gi, ' ');
-    sanitized = sanitized.replace(/(?:[\s/]+)on[a-zA-Z0-9_-]+\s*(?=[>/\s])/gi, ' ');
-  } while (sanitized !== prev);
-
-  // 5. Sanitize dangerous URL schemes in attributes (href, src, cite, poster, background, action, formaction)
-  // Strips javascript:, vbscript:, and unsafe data: (including entity-encoded, unquoted, and solidus-separated variations)
-  sanitized = sanitized.replace(
-    /(?:[\s/]+)(href|src|cite|poster|background|action|formaction)\s*=\s*(?:(["'])([\s\S]*?)\2|([^\s>]+))/gi,
-    (match, attr, _quote, quotedVal, unquotedVal) => {
-      const urlValue = quotedVal !== undefined ? quotedVal : (unquotedVal || '');
-      // Decode HTML entities and strip whitespace/control chars for safe comparison
-      const decoded = urlValue
-        .replace(/&#x([0-9a-f]+);?/gi, (_: any, hex: string) => String.fromCharCode(parseInt(hex, 16)))
-        .replace(/&#([0-9]+);?/gi, (_: any, dec: string) => String.fromCharCode(parseInt(dec, 10)))
-        .replace(/&colon;/gi, ':')
-        .replace(/&tab;/gi, '')
-        .replace(/&newline;/gi, '')
-        // eslint-disable-next-line no-control-regex
-        .replace(/[\u0000-\u001F\u007F-\u009F\s]/g, '')
-        .toLowerCase();
-
-      const isDangerousData =
-        decoded.startsWith('data:') &&
-        !RASTER_DATA_URL_REGEX.test(urlValue.trim());
-
-      if (
-        decoded.startsWith('javascript:') ||
-        decoded.startsWith('vbscript:') ||
-        isDangerousData
-      ) {
-        return ` ${attr}="#"`;
-      }
-      return match;
-    }
-  );
-
-  // 6. Sanitize style attributes (remove expression(), url(), -moz-binding, @import, behavior)
-  sanitized = sanitized.replace(
-    /\s+style\s*=\s*(["'])([\s\S]*?)\1/gi,
-    (match, quote, styleContent) => {
-      const cleanStyle = styleContent
-        .replace(/expression\s*\([^)]*\)/gi, '')
-        .replace(/url\s*\(\s*["']?\s*javascript:[^)]*\)/gi, '')
-        .replace(/url\s*\([^)]*\)/gi, 'none')
-        .replace(/@import\s+[^;]+;/gi, '')
-        .replace(/-moz-binding\s*:[^;]+;/gi, '')
-        .replace(/behavior\s*:[^;]+;/gi, '');
-
-      return ` style=${quote}${cleanStyle}${quote}`;
-    }
-  );
-
-  // 7. Ensure target="_blank" links have rel="noopener noreferrer" deterministically
-  sanitized = sanitized.replace(
-    /<a\b([^>]*\btarget\s*=\s*["']_blank["'][^>]*)>/gi,
-    (match, attrs) => {
-      if (!/rel\s*=/i.test(attrs)) {
-        return `<a${attrs} rel="noopener noreferrer">`;
-      }
-      return match;
-    }
-  );
+  // 4. Tokenize and sanitize all remaining HTML tags and their attributes
+  sanitized = sanitized.replace(/<([a-zA-Z][a-zA-Z0-9:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g, (_, tagName, rawAttrs) => {
+    const isSelfClosing = rawAttrs.trim().endsWith('/');
+    const cleanAttrs = rawAttrs.replace(/\/+\s*$/, '');
+    return sanitizeTagAttributes(tagName, cleanAttrs, isSelfClosing);
+  });
 
   return sanitized.trim();
 }

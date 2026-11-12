@@ -184,6 +184,12 @@ export async function createDraft(
   input: CreateBlogPostInput,
   author: AdminUserSession
 ): Promise<BlogPostItem> {
+  const status = input.status || 'DRAFT';
+
+  if ((status === 'PUBLISHED' || status === 'SCHEDULED') && !hasPermission(author.role, 'PUBLISH_CONTENT')) {
+    throw new Error(`Forbidden: Role '${author.role}' lacks 'PUBLISH_CONTENT' permission to publish or schedule blog posts.`);
+  }
+
   const db = getDb();
 
   const validation = validateBlogPostPayload(input);
@@ -204,11 +210,6 @@ export async function createDraft(
   }
 
   const readingTime = calculateReadingTime(validation.sanitized.content);
-  const status = input.status || 'DRAFT';
-
-  if ((status === 'PUBLISHED' || status === 'SCHEDULED') && !hasPermission(author.role, 'PUBLISH_CONTENT')) {
-    throw new Error(`Forbidden: Role '${author.role}' lacks 'PUBLISH_CONTENT' permission to publish or schedule blog posts.`);
-  }
 
   const publishedAt = status === 'PUBLISHED' ? (input.publishedAt ? new Date(input.publishedAt) : new Date()) : null;
   const scheduledFor = input.scheduledFor ? new Date(input.scheduledFor) : null;
@@ -472,6 +473,10 @@ export async function deletePost(id: string, author: AdminUserSession): Promise<
  * Publishes a blog post immediately.
  */
 export async function publishPost(id: string, author: AdminUserSession): Promise<BlogPostItem> {
+  if (!hasPermission(author.role, 'PUBLISH_CONTENT')) {
+    throw new Error(`Forbidden: Role '${author.role}' lacks 'PUBLISH_CONTENT' permission to publish blog posts.`);
+  }
+
   const db = getDb();
   let existing = await db.blogPost.findUnique({ where: { id } });
   if (!existing) {
@@ -516,6 +521,10 @@ export async function publishPost(id: string, author: AdminUserSession): Promise
  * Unpublishes a blog post, moving it back to draft state.
  */
 export async function unpublishPost(id: string, author: AdminUserSession): Promise<BlogPostItem> {
+  if (!hasPermission(author.role, 'PUBLISH_CONTENT')) {
+    throw new Error(`Forbidden: Role '${author.role}' lacks 'PUBLISH_CONTENT' permission to unpublish blog posts.`);
+  }
+
   const db = getDb();
   let existing = await db.blogPost.findUnique({ where: { id } });
   if (!existing) {
@@ -560,6 +569,10 @@ export async function schedulePost(
   scheduledFor: Date | string,
   author: AdminUserSession
 ): Promise<BlogPostItem> {
+  if (!hasPermission(author.role, 'PUBLISH_CONTENT')) {
+    throw new Error(`Forbidden: Role '${author.role}' lacks 'PUBLISH_CONTENT' permission to schedule blog posts.`);
+  }
+
   const db = getDb();
   const existing = await db.blogPost.findUnique({ where: { id } });
   if (!existing) {
