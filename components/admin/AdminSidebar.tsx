@@ -17,6 +17,7 @@ import {
   X,
   Archive,
   Compass,
+  Sparkles,
 } from 'lucide-react';
 import { AdminRole } from '@/lib/admin/types';
 
@@ -108,6 +109,12 @@ export function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
           icon: History,
         },
         {
+          name: 'Latest Updates',
+          href: '/admin/latest-updates',
+          icon: Sparkles,
+          badge: 'Latest',
+        },
+        {
           name: 'Users',
           href: '/admin/users',
           icon: Users,
@@ -163,7 +170,11 @@ export function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
               <div className="space-y-1">
                 {section.items.map((item) => {
                   const Icon = item.icon;
-                  const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  const isUpdatesItem = item.href === '/admin/latest-updates' || item.href === '/admin/update-changes';
+                  const isActive =
+                    pathname === item.href ||
+                    pathname.startsWith(`${item.href}/`) ||
+                    (isUpdatesItem && (pathname === '/admin/latest-updates' || pathname === '/admin/update-changes'));
 
                   if (item.disabled) {
                     return (
@@ -220,7 +231,7 @@ export function AdminSidebar({ isOpen, onClose }: AdminSidebarProps) {
         {/* Footer info */}
         <div className="p-4 border-t border-[#1F2248] text-[11px] text-[#8C92B2] flex items-center justify-between">
           <span>Convert24 CMS</span>
-          <span className="font-mono text-[10px]">v2.0</span>
+          <span className="font-mono text-[10px]">v2.4.0</span>
         </div>
       </aside>
     </>
