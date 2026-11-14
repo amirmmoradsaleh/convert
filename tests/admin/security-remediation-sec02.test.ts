@@ -28,6 +28,10 @@ import {
 import { POST as publishBlogRoute } from '../../app/api/admin/blog/[id]/publish/route';
 import { POST as unpublishBlogRoute } from '../../app/api/admin/blog/[id]/unpublish/route';
 import { POST as scheduleBlogRoute } from '../../app/api/admin/blog/[id]/schedule/route';
+import { POST as createBlogRoute } from '../../app/api/admin/blog/route';
+import { PUT as updateBlogRoute } from '../../app/api/admin/blog/[id]/route';
+import { POST as createPageRoute } from '../../app/api/admin/pages/route';
+import { PUT as updatePageRoute } from '../../app/api/admin/pages/[id]/route';
 import { NextRequest } from 'next/server';
 import { getDb } from '@/lib/db';
 
@@ -1372,6 +1376,134 @@ describe('Convert24 Security Remediation — SEC-02 Regression Protection', () =
         });
         const res = await scheduleBlogRoute(req, { params: Promise.resolve({ id: 'post-1' }) });
         expect(res.status).toBe(403);
+      });
+
+      it('POST /api/admin/blog rejects EDITOR submitting status: PUBLISHED with HTTP 403', async () => {
+        mockRequireAdminAuth.mockResolvedValueOnce({ user: editorUser });
+
+        const req = new NextRequest('http://localhost:3000/api/admin/blog', {
+          method: 'POST',
+          body: JSON.stringify({
+            title: 'Unauthorized Live Post',
+            slug: 'unauthorized-live-post',
+            content: '<p>Content</p>',
+            status: 'PUBLISHED',
+          }),
+        });
+
+        const res = await createBlogRoute(req);
+        expect(res.status).toBe(403);
+        const data = await res.json();
+        expect(data.error).toContain("Forbidden: Role 'EDITOR' lacks 'PUBLISH_CONTENT' permission");
+        expect(mockDb.blogPost.create).not.toHaveBeenCalled();
+      });
+
+      it('PUT /api/admin/blog/[id] rejects EDITOR mutating an already PUBLISHED post with HTTP 403', async () => {
+        mockRequireAdminAuth.mockResolvedValueOnce({ user: editorUser });
+        mockDb.blogPost.findUnique.mockResolvedValueOnce({
+          id: 'post-pub-route',
+          slug: 'live-post-route',
+          title: 'Live Post',
+          status: 'PUBLISHED',
+        });
+
+        const req = new NextRequest('http://localhost:3000/api/admin/blog/post-pub-route', {
+          method: 'PUT',
+          body: JSON.stringify({ title: 'Attempted Modification' }),
+        });
+
+        const res = await updateBlogRoute(req, { params: Promise.resolve({ id: 'post-pub-route' }) });
+        expect(res.status).toBe(403);
+        const data = await res.json();
+        expect(data.error).toContain("Forbidden: Role 'EDITOR' lacks 'PUBLISH_CONTENT' permission to modify published or scheduled blog posts");
+        expect(mockDb.blogPost.update).not.toHaveBeenCalled();
+      });
+
+      it('PUT /api/admin/blog/[id] rejects EDITOR attempting to publish a DRAFT post with HTTP 403', async () => {
+        mockRequireAdminAuth.mockResolvedValueOnce({ user: editorUser });
+        mockDb.blogPost.findUnique.mockResolvedValueOnce({
+          id: 'post-draft-route',
+          slug: 'draft-post-route',
+          title: 'Draft Post',
+          status: 'DRAFT',
+        });
+
+        const req = new NextRequest('http://localhost:3000/api/admin/blog/post-draft-route', {
+          method: 'PUT',
+          body: JSON.stringify({ status: 'PUBLISHED' }),
+        });
+
+        const res = await updateBlogRoute(req, { params: Promise.resolve({ id: 'post-draft-route' }) });
+        expect(res.status).toBe(403);
+        const data = await res.json();
+        expect(data.error).toContain("Forbidden: Role 'EDITOR' lacks 'PUBLISH_CONTENT' permission to publish or schedule blog posts");
+        expect(mockDb.blogPost.update).not.toHaveBeenCalled();
+      });
+
+      it('POST /api/admin/pages rejects EDITOR submitting status: PUBLISHED with HTTP 403', async () => {
+        mockRequireAdminAuth.mockResolvedValueOnce({ user: editorUser });
+
+        const req = new NextRequest('http://localhost:3000/api/admin/pages', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: 'Unauthorized Live Page',
+            slug: 'unauthorized-live-page',
+            status: 'PUBLISHED',
+            blocks: [],
+          }),
+        });
+
+        const res = await createPageRoute(req);
+        expect(res.status).toBe(403);
+        const data = await res.json();
+        expect(data.error).toContain("Forbidden: Role 'EDITOR' lacks 'PUBLISH_CONTENT' permission to create published pages");
+        expect(mockDb.page.create).not.toHaveBeenCalled();
+      });
+
+      it('PUT /api/admin/pages/[id] rejects EDITOR mutating an already PUBLISHED page with HTTP 403', async () => {
+        mockRequireAdminAuth.mockResolvedValueOnce({ user: editorUser });
+        mockDb.page.findUnique.mockResolvedValueOnce({
+          id: 'page-pub-route',
+          slug: 'live-page-route',
+          name: 'Live Page',
+          status: 'PUBLISHED',
+          content: { blocks: [] },
+          seo: null,
+        });
+
+        const req = new NextRequest('http://localhost:3000/api/admin/pages/page-pub-route', {
+          method: 'PUT',
+          body: JSON.stringify({ name: 'Attempted Modification' }),
+        });
+
+        const res = await updatePageRoute(req, { params: Promise.resolve({ id: 'page-pub-route' }) });
+        expect(res.status).toBe(403);
+        const data = await res.json();
+        expect(data.error).toContain("Forbidden: Role 'EDITOR' lacks 'PUBLISH_CONTENT' permission to modify published pages");
+        expect(mockDb.page.update).not.toHaveBeenCalled();
+      });
+
+      it('PUT /api/admin/pages/[id] rejects EDITOR attempting to publish a DRAFT page with HTTP 403', async () => {
+        mockRequireAdminAuth.mockResolvedValueOnce({ user: editorUser });
+        mockDb.page.findUnique.mockResolvedValueOnce({
+          id: 'page-draft-route',
+          slug: 'draft-page-route',
+          name: 'Draft Page',
+          status: 'DRAFT',
+          content: { blocks: [] },
+          seo: null,
+        });
+
+        const req = new NextRequest('http://localhost:3000/api/admin/pages/page-draft-route', {
+          method: 'PUT',
+          body: JSON.stringify({ status: 'PUBLISHED' }),
+        });
+
+        const res = await updatePageRoute(req, { params: Promise.resolve({ id: 'page-draft-route' }) });
+        expect(res.status).toBe(403);
+        const data = await res.json();
+        expect(data.error).toContain("Forbidden: Role 'EDITOR' lacks 'PUBLISH_CONTENT' permission to publish pages");
+        expect(mockDb.page.update).not.toHaveBeenCalled();
       });
     });
   });

@@ -132,8 +132,8 @@ export function isSafeUrl(url?: string | null): boolean {
 
   // Block dangerous schemes
   if (
-    decoded.startsWith('javascript:') ||
-    decoded.startsWith('vbscript:') ||
+    decoded.startsWith('javascript') ||
+    decoded.startsWith('vbscript') ||
     decoded.startsWith('data:')
   ) {
     if (decoded.startsWith('data:')) {
@@ -170,6 +170,19 @@ export function isSafeUrl(url?: string | null): boolean {
       }
       const parsedDecoded = new URL(checkStr, 'https://guard.convert24.internal');
       if (parsedDecoded.origin !== 'https://guard.convert24.internal') {
+        return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Safe relative path without leading slash (e.g. 'safe.png', './photo.jpg', 'images/banner.webp')
+  if (!trimmed.includes(':') && !decoded.includes(':') && !trimmed.startsWith('//') && !trimmed.includes('\\')) {
+    try {
+      const parsed = new URL(trimmed, 'https://guard.convert24.internal/');
+      if (parsed.origin !== 'https://guard.convert24.internal') {
         return false;
       }
       return true;
@@ -529,12 +542,11 @@ export function sanitizeTagAttributes(tagName: string, attrString: string, isSel
     // 4. Sanitize style attributes
     if (lowerName === 'style') {
       const cleanStyle = value
-        .replace(/expression\s*\([^)]*\)/gi, '')
-        .replace(/url\s*\(\s*["']?\s*javascript:[^)]*\)/gi, '')
+        .replace(/url\s*\(\s*["']?\s*javascript:[^)]*\)/gi, 'none')
         .replace(/url\s*\([^)]*\)/gi, 'none')
-        .replace(/@import\s+[^;]+;/gi, '')
-        .replace(/-moz-binding\s*:[^;]+;/gi, '')
-        .replace(/behavior\s*:[^;]+;/gi, '')
+        .replace(/(?:expression\s*\(|\bexpression\s*:)[^;)]*(?:\)|;|$)/gi, '')
+        .replace(/@import\s+[^;]+(?:;|$)/gi, '')
+        .replace(/(?:-moz-binding|behavior)\s*:[^;]+(?:;|$)/gi, '')
         .replace(/"/g, '&quot;');
       cleanAttrs.push(`style="${cleanStyle}"`);
       continue;
@@ -572,30 +584,72 @@ export function sanitizeRichTextHtml(rawHtml?: string | null): string {
   if (!rawHtml || typeof rawHtml !== 'string') return '';
 
   let sanitized = rawHtml;
-
-  // 1. Recursively remove paired dangerous tags and their content until fixed point
-  // Note: includes svg and math to prevent <svg/onload=alert(1)> and nested namespace bypasses
   let prev: string;
+
+  // 1. Strip CDATA sections and HTML comments to prevent comment-hiding attacks
   do {
     prev = sanitized;
-    sanitized = sanitized.replace(/<\s*(script|iframe|object|embed|applet|style|form|input|button|svg|math)[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
+    sanitized = sanitized.replace(/<!--[\s\S]*?-->/gi, '');
+    sanitized = sanitized.replace(/<!\[CDATA\[[\s\S]*?\]\]>/gi, '');
   } while (sanitized !== prev);
 
-  // 1b. Remove any remaining unclosed or orphaned dangerous tags
+  // 2. Recursively remove dangerous elements and tags until fixed point
+  const dangerousTags = [
+    'script',
+    'iframe',
+    'frame',
+    'frameset',
+    'object',
+    'embed',
+    'applet',
+    'style',
+    'link',
+    'meta',
+    'base',
+    'form',
+    'input',
+    'button',
+    'select',
+    'textarea',
+    'svg',
+    'math',
+    'template',
+    'dialog',
+  ];
+
+  const tagPattern = new RegExp(
+    `<\\s*(${dangerousTags.join('|')})\\b[\\s\\S]*?<\\s*\\/\\s*\\1\\s*>`,
+    'gi'
+  );
+  const selfClosingPattern = new RegExp(
+    `<\\s*(${dangerousTags.join('|')})\\b[^>]*\\/?>`,
+    'gi'
+  );
+  const closingPattern = new RegExp(
+    `<\\s*\\/\\s*(${dangerousTags.join('|')})\\s*>`,
+    'gi'
+  );
+
   do {
     prev = sanitized;
-    sanitized = sanitized.replace(/<\s*(script|iframe|object|embed|applet|style|form|input|button|svg|math)\b[^>]*\/?>/gi, '');
-    sanitized = sanitized.replace(/<\s*\/\s*(script|iframe|object|embed|applet|style|form|input|button|svg|math)\s*>/gi, '');
+    let innerPrev: string;
+    do {
+      innerPrev = sanitized;
+      sanitized = sanitized.replace(tagPattern, '');
+    } while (sanitized !== innerPrev);
+
+    sanitized = sanitized.replace(selfClosingPattern, '');
+    sanitized = sanitized.replace(closingPattern, '');
   } while (sanitized !== prev);
 
-  // 2. Tokenize and sanitize all remaining HTML tags and their attributes
+  // 3. Tokenize and sanitize all remaining HTML tags and their attributes
   sanitized = sanitized.replace(/<([a-zA-Z][a-zA-Z0-9:-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g, (_, tagName, rawAttrs) => {
     const isSelfClosing = rawAttrs.trim().endsWith('/');
     const cleanAttrs = rawAttrs.replace(/\/+\s*$/, '');
     return sanitizeTagAttributes(tagName, cleanAttrs, isSelfClosing);
   });
 
-  // 3. Remove dangerous URL schemes in markdown links and images: [label](url) and ![alt](url)
+  // 4. Remove dangerous URL schemes in markdown links and images: [label](url) and ![alt](url)
   sanitized = sanitized.replace(
     /(!?\[[^\]\r\n]*\])\(((?:[^()\r\n]|\((?:[^()\r\n]|\([^()\r\n]*\))*\))*)\)/g,
     (match, label, rawUrl) => {
@@ -623,6 +677,7 @@ export function sanitizeCustomHtml(rawHtml?: string | null): string {
   if (!rawHtml || typeof rawHtml !== 'string') return '';
 
   let sanitized = rawHtml;
+  let prev: string;
 
   // 1. Strip document-level metadata and DOCTYPE tags completely
   // These belong only in the root HTML document (<head>), never in CMS body fragments.
@@ -670,12 +725,21 @@ export function sanitizeCustomHtml(rawHtml?: string | null): string {
     `<\\s*(${dangerousTags.join('|')})\\b[^>]*\\/?>`,
     'gi'
   );
+  const closingPattern = new RegExp(
+    `<\\s*\\/\\s*(${dangerousTags.join('|')})\\s*>`,
+    'gi'
+  );
 
-  let prev: string;
   do {
     prev = sanitized;
-    sanitized = sanitized.replace(tagPattern, '');
+    let innerPrev: string;
+    do {
+      innerPrev = sanitized;
+      sanitized = sanitized.replace(tagPattern, '');
+    } while (sanitized !== innerPrev);
+
     sanitized = sanitized.replace(selfClosingPattern, '');
+    sanitized = sanitized.replace(closingPattern, '');
   } while (sanitized !== prev);
 
   // 3. Strip CDATA sections and HTML comments to prevent comment-hiding attacks
